@@ -1,11 +1,14 @@
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
 
-#define PIN_SOILMOISTURESENSOR 34
+#define PIN_SOILMISTURESENSOR 34
+#define PIN_PUMP 23
 
-//my soil calibration constants (esp32 12-bit ADC)
+
+//my soil calibration constant based on the esp32 12-bit ADC
 const int soilHigherValue = 3500;
 const int soilLowerValue  = 1650;
+const long SoilMoistureThreshold = 20; //%
 
 const int samplingCount = 50;
 const int samplingTolerance = 100;
@@ -13,49 +16,75 @@ const int samplingTolerance = 100;
 LiquidCrystal_I2C lcd (0x27, 16,2);
 
 long getSoilMoistureSamplingAverage();
+void powerPumpOnFor(int);
 
 void setup() {
+  pinMode(PIN_PUMP, OUTPUT);
+
   lcd.init();
   lcd.backlight();
 }
 
 void loop() {
-  long reading = getSoilMoistureSamplingAverage();
+  long soilReadingAverage = getSoilMoistureSamplingAverage();
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print(String(reading) + "%"); 
+  lcd.print(String(soilReadingAverage) + "%"); 
+
+  if(soilReadingAverage <= SoilMoistureThreshold){
+    lcd.setCursor(0, 1);
+    lcd.print("Pump On");
+
+    powerPumpOnFor(1000);
+    
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print(String(soilReadingAverage) + "%"); 
+    lcd.setCursor(0, 1);
+    lcd.print("Watering Done");
+
+    delay(10000); //wait for 10 seconds
+  }
+  
+
 }
 
 long getSoilMoistureSamplingAverage()
 {
   int sampling[samplingCount];
-  int readingIndex = 0;
-  int readingTotal = 0;
-  int readingFaultsCount = 0;
+  int soilReadingAverageIndex = 0;
+  int soilReadingAverageTotal = 0;
+  int soilReadingAverageFaultsCount = 0;
   long soilMoisturePercentage = 0;
 
   //read all samples
-  while (readingIndex < samplingCount) {
-    sampling[readingIndex++] = analogRead(PIN_SOILMOISTURESENSOR);
+  while (soilReadingAverageIndex < samplingCount) {
+    sampling[soilReadingAverageIndex++] = analogRead(PIN_SOILMISTURESENSOR);
     delay(1000/samplingCount);
   }
 
   //calculate average
   for (byte samplesIndex = 0; samplesIndex < samplingCount; samplesIndex++)
-    readingTotal += sampling[samplesIndex];
-  long average = readingTotal / (samplingCount);
+    soilReadingAverageTotal += sampling[samplesIndex];
+  long average = soilReadingAverageTotal / (samplingCount);
 
   //recalculate average without the fault values (beyond the allowed tolerance)
-  readingTotal = 0;
+  soilReadingAverageTotal = 0;
   for (byte samplesIndex = 0; samplesIndex < samplingCount; samplesIndex++)
     if(sampling[samplesIndex] > average - samplingTolerance || sampling[samplesIndex] < average + samplingTolerance)
-      readingTotal += sampling[samplesIndex];
+      soilReadingAverageTotal += sampling[samplesIndex];
     else
-      readingFaultsCount++;
-  average = readingTotal / (samplingCount - readingFaultsCount);
+      soilReadingAverageFaultsCount++;
+  average = soilReadingAverageTotal / (samplingCount - soilReadingAverageFaultsCount);
   
   //map and cap average to percentages
   soilMoisturePercentage = constrain(map(average, soilHigherValue, soilLowerValue, 0, 100), 0, 100);
 
   return soilMoisturePercentage;
+}
+
+void powerPumpOnFor(int milliSeconds){
+  analogWrite(PIN_PUMP, 150);
+  delay(milliSeconds);
+  analogWrite(PIN_PUMP, 0);
 }
